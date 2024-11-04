@@ -1,0 +1,5 @@
+
+# Exclude venv, vscode  and uploads
+venv/
+.vscode/
+uploads/
