@@ -62,11 +62,13 @@ async def preprocess_file(file: UploadFile = File(...)):
         'sections': secciones_extraidas
     }
 
-    output_file = f"{UPLOAD_DIR}{file.filename}_result.json"
+    json_file_name = f"{file.filename}_result.json"
+
+    output_file = f"{UPLOAD_DIR}{json_file_name}"
     with open(output_file, "w", encoding='utf-8') as f:
         json.dump(results, f, ensure_ascii=False, indent=4)
 
-    return {"message": "File processed successfully", "results": results}
+    return {"message": "File processed successfully", "results": results, "output_file": json_file_name }
 
 
 

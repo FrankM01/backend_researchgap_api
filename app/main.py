@@ -1,13 +1,13 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.endpoints import processing, home
+from app.endpoints import processing, home, analyzing
 
 app = FastAPI()
 
 # Configure CORS
 app.add_middleware(
   CORSMiddleware,
-  allow_origins=["http://127.0.0.1:5173"],
+  allow_origins=["http://localhost:5173"],
   allow_credentials=True,
   allow_methods=["*"],
   allow_headers=["*"],
@@ -16,4 +16,5 @@ app.add_middleware(
 
 app.include_router(processing.router)
 app.include_router(home.router)
+app.include_router(analyzing.router)
 
