@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, UploadFile, File
 import pdfplumber
 import re
 import spacy
-from collections import Counter
+from collections import Counter,defaultdict
 import json
 import os
 
@@ -12,7 +12,7 @@ nlp = spacy.load('en_core_web_sm') # Load NER Model
 
 @router.post("/preprocess/")
 async def preprocess_file(file: UploadFile = File(...)):
-    # Save the uploaded file
+    # *Save the uploaded file
     try:
         file_location = f"{UPLOAD_DIR}{file.filename}"
         with open(file_location, "wb") as f:
@@ -21,50 +21,26 @@ async def preprocess_file(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail= "Error saving file")
     
 
-    # Extract text from file
+    # *Extract text from file
     try:
         with pdfplumber.open(file_location) as pdf:
             text = '\n\n'.join(extract_text_from_page(page) for page in pdf.pages)
     except Exception as e:
         raise HTTPException(status_code=500, detail="Error extracting text from file")
 
-    # Remove special characters (Data cleaning) and Apply NER
+    # *Data cleaning and Apply NER
     try:
         texto_limpio = clean_text(text)
-        entidades_completas = apply_ner(texto_limpio)
+        secciones_extraidas = extract_sections(texto_limpio)
+        results = generate_json_with_ner(texto_limpio, secciones_extraidas)
     except Exception as e:
         raise HTTPException(status_code=500, detail="Error processing data")
 
-    # Filtrar entidades
-    authors = [entity for entity, label in entidades_completas if label == 'PERSON']
-    institutions = [entity for entity, label in entidades_completas if label == 'ORG']
-    technologies = [entity for entity, label in entidades_completas if label in ['TECHNOLOGY', 'PRODUCT', 'WORK_OF_ART','STATE_OF_ART']]
-
-    # Contar entidades e identificar tecnologías emergentes
-    authors_freq = Counter(authors)
-    institutions_freq = Counter(institutions)
-    technologies_freq = Counter(technologies)
-    emergents_technologies = [technology for technology, freq in technologies_freq.items() if freq == 1]
-
-    # Extraer secciones clave
-    secciones_extraidas = extract_sections(texto_limpio)
-
-    # Decodificar caracteres Unicode
-    for section, content in secciones_extraidas.items():
-        secciones_extraidas[section] = replace_unicode(content)
-
-    # Generar resultados en formato JSON
-    results = {
-        'authors': dict(authors_freq),
-        'institutions': dict(institutions_freq),
-        'technologies': dict(technologies_freq),
-        'emergent_technologies': emergents_technologies,
-        'sections': secciones_extraidas
-    }
-
+    
+    # *Save JSON File
     json_file_name = f"{file.filename}_result.json"
-
     output_file = f"{UPLOAD_DIR}{json_file_name}"
+
     with open(output_file, "w", encoding='utf-8') as f:
         json.dump(results, f, ensure_ascii=False, indent=4)
 
@@ -102,38 +78,94 @@ def clean_text(text):
 
 def apply_ner(text):
     doc = nlp(text)
-    entities = [(ent.text, ent.label_) for ent in doc.ents]
+    entities = {"authors": [], "institutions": [], "technologies": []}
+    for ent in doc.ents:
+        entity_text = re.sub(r"[\W_]+", " ", ent.text).strip().lower()
+        if ent.label_ == "PERSON" and entity_text not in ["fig", "table", "al", "page"]:
+            entities["authors"].append(entity_text)
+        elif ent.label_ == "ORG" and entity_text not in ["fig", "page", "al", "doi"]:
+            entities["institutions"].append(entity_text)
+        elif ent.label_ in ["TECHNOLOGY", "PRODUCT", "WORK_OF_ART", "STATE_OF_ART"]:
+            entities["technologies"].append(entity_text)
+    
+    entities["authors"] = dict(Counter(entities["authors"]))
+    entities["institutions"] = dict(Counter(entities["institutions"]))
+    entities["technologies"] = dict(Counter(entities["technologies"]))
     return entities
 
 
 def extract_sections(text):
-    sections = re.split(r"(abstract\s*| discussion\s*| limitation\s*| conclusion\s*)", text, flags=re.IGNORECASE)
+    sections = re.split(r"(discussion\s*| limitation\s*| conclusion\s*)", text, flags=re.IGNORECASE)
     extracted_sections = {}
     for i in range(1, len(sections), 2):
         section_title = sections[i].strip().lower()
-        extracted_sections[section_title] = sections[i + 1].strip()
+        content = sections[i + 1].strip()
+        extracted_sections[section_title] = replace_unicode(content)
+    
     return extracted_sections
 
 
 def replace_unicode(text):
     replacements = {
-        '\u2011': '-',  # Non-breaking hyphen
-        '\u2013': '-',  # En dash
-        '\u2014': '-',  # Em dash
-        '\u2018': "'",  # Left single quote
-        '\u2019': "'",  # Right single quote
-        '\u201C': '"',  # Left double quote
-        '\u201D': '"',  # Right double quote
-        '\u00e1': 'á',  # a with acute
-        '\u00e9': 'é',  # e with acute
-        '\u00ed': 'í',  # i with acute
-        '\u00f3': 'ó',  # o with acute
-        '\u00fa': 'ú',  # u with acute
-        '\u00ef': 'ï',  # i with diaeresis
-        '\u00fc': 'ü',  # u with diaeresis
-        '\u00f1': 'ñ',  # n with tilde
+        '\u2011': '-', '\u2013': '-', '\u2014': '-', '\u2018': "'", '\u2019': "'", '\u201C': '"', '\u201D': '"',
+        '\u00e1': 'á', '\u00e9': 'é', '\u00ed': 'í', '\u00f3': 'ó', '\u00fa': 'ú', '\u00ef': 'ï', '\u00fc': 'ü', '\u00f1': 'ñ',
     }
-
     for unicode_char, replacement in replacements.items():
         text = text.replace(unicode_char, replacement)
     return text
+
+def generate_json_with_ner(text, sections):
+    ner_data = apply_ner(text)
+
+    result_json = {
+        "authors": clean_authors(ner_data["authors"]),
+        "institutions": clean_institutions(ner_data["institutions"]),
+        "technologies": clean_technologies(ner_data["technologies"]),
+        "sections": clean_sections(sections)
+    }
+
+    return result_json
+
+
+def clean_authors(authors):
+    cleaned_authors = defaultdict(int)
+    for author, count in authors.items():
+        # Elimina caracteres no deseados y normaliza texto
+        author = re.sub(r"[\W_]+", " ", author).strip().lower()
+        if author not in ["fig", "table", "al", "page", "contributed", "applications"]:
+            # Agrupa nombres similares
+            if count > 1:
+                cleaned_authors[author] += count
+    return dict(cleaned_authors)
+
+
+def clean_institutions(institutions):
+    cleaned_institutions = defaultdict(int)
+    for institution, count in institutions.items():
+        institution = re.sub(r"[\W_]+", " ", institution).strip().lower()
+        # Filtra URLs y nombres irrelevantes
+        if institution not in ["fig", "page", "al", "doi"] and not re.match(r"https?|doi", institution):
+            if count > 1:
+                cleaned_institutions[institution] += count
+    return dict(cleaned_institutions)
+
+
+def clean_technologies(technologies):
+    cleaned_technologies = {}
+    for technology, count in technologies.items():
+        # Elimina entradas que parecen fechas o números
+        if not re.match(r"^\d+$", technology) and not re.match(r"^\d{4} \d{2} \d{2}$", technology):
+            technology = re.sub(r"[\W_]+", " ", technology).strip().lower()
+            # Excluye entradas ambiguas
+            if technology not in ["by", "table", "page"]:
+                cleaned_technologies[technology] = count
+    return cleaned_technologies
+
+def clean_sections(sections):
+    cleaned_sections = {}
+    for section, content in sections.items():
+        content = re.sub(r"-\s+", "", content)
+        content = re.sub(r"\s+", " ", content).strip()
+        cleaned_sections[section] = content
+    return cleaned_sections
+            
