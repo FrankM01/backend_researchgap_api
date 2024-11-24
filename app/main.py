@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.endpoints import processing, home, analyzing
+from app.endpoints import processing, home, analyzing, validating
 
 app = FastAPI()
 
@@ -17,4 +17,5 @@ app.add_middleware(
 app.include_router(processing.router)
 app.include_router(home.router)
 app.include_router(analyzing.router)
+app.include_router(validating.router)
 
