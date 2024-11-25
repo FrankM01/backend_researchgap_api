@@ -4,6 +4,7 @@ import spacy
 from collections import Counter,defaultdict
 import json
 import requests
+import os
 
 from app.config import PDF_EXTRACTOR_API_KEY  
 
@@ -56,6 +57,7 @@ async def preprocess_file(file: UploadFile = File(...)):
         with open(output_file, "w", encoding='utf-8') as f:
             json.dump(results, f, ensure_ascii=False, indent=4)
 
+        clean_up_temp_files(job_id)
         print("Archivo JSON guardado exitosamente")
         return {"message": "File processed successfully", "results": results, "output_file": json_file_name}
     except Exception as e:
@@ -109,12 +111,39 @@ def get_converted_text(job_id):
     headers = {"X-Oc-Api-Key": API_KEY}
     response = requests.get(url, headers=headers)
     if response.status_code == 200:
-        # Supongamos que el primer archivo de salida es el que queremos
-        output_file_url = response.json()[0]["uri"]
+        output_files = response.json()
+        if not output_files:
+            print("Error: No se encontraron archivos de salida en la respuesta")
+            return None
+        output_file_url = output_files[0].get("uri")
+        if not output_file_url:
+            print("Error: No se encontró una URI en los archivos de salida")
+            return None
         text_response = requests.get(output_file_url)
         if text_response.status_code == 200:
             return text_response.text
+        else:
+            print(f"Error al descargar el archivo: {text_response.status_code}")
+    else:
+        print(f"Error al obtener los archivos de salida: {response.status_code}")
     return None
+
+
+def clean_up_temp_files(job_id):
+    """Limpia los archivos temporales relacionados con un trabajo."""
+    url = f"{BASE_URL}/jobs/{job_id}"
+    headers = {"X-Oc-Api-Key": API_KEY}
+    # Borra el trabajo en la API para liberar espacio
+    requests.delete(url, headers=headers)
+
+    # Opcional: Limpia el directorio local de uploads
+    for file in os.listdir(UPLOAD_DIR):
+        file_path = os.path.join(UPLOAD_DIR, file)
+        try:
+            if os.path.isfile(file_path):
+                os.unlink(file_path)
+        except Exception as e:
+            print(f"Error al eliminar {file_path}: {e}")
 
 
 def clean_text(text):
